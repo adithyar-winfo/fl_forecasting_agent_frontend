@@ -1029,9 +1029,8 @@ if SIDEBAR_LOGO_PATH.exists():
 st.sidebar.markdown("---")
 st.sidebar.subheader("Agent Controls")
 
-chat_url = st.sidebar.text_input("Chat API URL", value=CHAT_URL)
-refresh_agent_url = st.sidebar.text_input("Refresh API URL", value=REFRESH_AGENT_URL)
-st.sidebar.caption(f"Using chat endpoint: {chat_url}")
+chat_url = CHAT_URL
+refresh_agent_url = REFRESH_AGENT_URL
 
 if st.sidebar.button("🔄 Refresh Agent"):
     with st.sidebar:
@@ -1048,17 +1047,15 @@ if st.sidebar.button("🔄 Refresh Agent"):
                 st.error(f"🚨 Error: {str(e)}")
 
 # -------------------------------
-# Sidebar
+# Session
 # -------------------------------
-# Thread ID (conversation memory)
 if "thread_id" not in st.session_state:
     st.session_state.thread_id = f"thread-{uuid.uuid4().hex[:8]}"
 
 thread_id = st.sidebar.text_input(
     "Thread ID",
-    value=st.session_state.thread_id
+    value=st.session_state.thread_id,
 )
-
 st.session_state.thread_id = thread_id
 
 if st.sidebar.button("Reset Chat"):
@@ -1225,3 +1222,4 @@ if prompt := st.chat_input("Ask something..."):
 
             except Exception as e:
                 st.error(f"Request failed: {str(e)}")
+                
