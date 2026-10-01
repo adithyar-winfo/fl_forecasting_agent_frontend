@@ -166,6 +166,66 @@ def _format_backend_error(response: requests.Response) -> tuple[str, str | None]
     return f"Request failed ({status}): {compact}", None
 
 
+def _is_retryable_backend_response(response: requests.Response) -> bool:
+    status = response.status_code
+    content_type = (response.headers.get("content-type") or "").lower()
+    body = (response.text or "").lower()
+
+    if status in {502, 503, 504, 520, 522, 524}:
+        return True
+
+    return status >= 500 and ("text/html" in content_type or "<html" in body)
+
+
+def _local_backend_is_healthy() -> bool:
+    try:
+        health = requests.get("http://127.0.0.1:8010/health", timeout=1.2)
+        return bool(health.ok)
+    except requests.RequestException:
+        return False
+
+
+def _post_chat_with_fallback(chat_url: str, payload: dict, timeout: float) -> tuple[requests.Response, bool]:
+    """Send chat request; for transient upstream failures, try local backend once."""
+    primary_response = None
+    primary_error = None
+
+    try:
+        primary_response = requests.post(
+            chat_url,
+            json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=timeout,
+        )
+    except requests.RequestException as exc:
+        primary_error = exc
+
+    if primary_response is not None and (primary_response.ok or not _is_retryable_backend_response(primary_response)):
+        return primary_response, False
+
+    if chat_url != LOCAL_CHAT_URL and _local_backend_is_healthy():
+        try:
+            fallback_response = requests.post(
+                LOCAL_CHAT_URL,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+                timeout=timeout,
+            )
+            if fallback_response.ok:
+                return fallback_response, True
+            if primary_response is None:
+                return fallback_response, False
+        except requests.RequestException:
+            pass
+
+    if primary_response is not None:
+        return primary_response, False
+
+    if primary_error is not None:
+        raise primary_error
+    raise requests.RequestException("Chat request failed.")
+
+
 def _extract_markdown_tables(text: str) -> list[pd.DataFrame]:
     if not text:
         return []
@@ -1096,15 +1156,17 @@ if prompt := st.chat_input("Ask something..."):
     with st.chat_message("assistant"):
         with st.spinner("Processing..."):
             try:
-                response = requests.post(
-                    chat_url,
-                    json={
+                response, used_local_fallback = _post_chat_with_fallback(
+                    chat_url=chat_url,
+                    payload={
                         "message": prompt,
-                        "session_id": st.session_state.thread_id
+                        "session_id": st.session_state.thread_id,
                     },
-                    headers={"Content-Type": "application/json"},
                     timeout=REQUEST_TIMEOUT_SECONDS,
                 )
+
+                if used_local_fallback:
+                    st.caption("Remote backend was temporarily unavailable. Served this response from local backend.")
 
                 if response.ok:
                     data = response.json() if response.content else {}
@@ -1222,4 +1284,3 @@ if prompt := st.chat_input("Ask something..."):
 
             except Exception as e:
                 st.error(f"Request failed: {str(e)}")
-                
